@@ -1,4 +1,5 @@
 import logging
+import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -8,8 +9,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ANTHROPIC_API_KEY
 from content import SECTIONS, TEMPLATES
+
+# ──────────────────────────────────────────────
+# ТОН ОФ ВОЙС СТУДИИ
+# ──────────────────────────────────────────────
+
+TOV_PROMPT = """Ты редактор дизайн-студии ЦД. Твоя задача — привести текст в соответствие с тоном студии.
+
+Правила тона:
+- Обращение на ты
+- Без формализации и бюрократического языка
+- Без жаргонов
+- Чёткая структура — короткие блоки, не простыня текста
+- Корректные дизайн-термины
+- Никаких слов-паразитов: "безусловно", "важно отметить", "в целом", "стоит отметить", "на самом деле", "действительно"
+- Никаких вводных конструкций ради объёма
+- Текст звучит как живой человек, не как шаблон
+
+Получи текст от пользователя и верни:
+1. Исправленную версию
+2. Коротко — что изменил и почему
+
+Не добавляй лишних слов. Будь конкретным."""
 
 # ──────────────────────────────────────────────
 # МЕНЮ
@@ -35,6 +58,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/sprint — шаблон плана на спринт\n"
         "/recap — шаблон рекапа встречи\n"
         "/glossary — глоссарий студии\n"
+        "/tone [текст] — проверка тона сообщения\n"
         "/help — список команд\n\n"
         "Или просто нажми кнопку в меню."
     )
@@ -49,6 +73,47 @@ async def glossary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(TEMPLATES["glossary"])
 
 # ──────────────────────────────────────────────
+# ПРОВЕРКА ТОНА
+# ──────────────────────────────────────────────
+
+async def tone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = " ".join(context.args) if context.args else ""
+
+    if not text:
+        await update.message.reply_text(
+            "Напиши текст после команды.\n\nПример:\n/tone ну короче мы решили переделать главную"
+        )
+        return
+
+    await update.message.reply_text("Проверяю тон...")
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1000,
+                    "system": TOV_PROMPT,
+                    "messages": [
+                        {"role": "user", "content": text}
+                    ],
+                }
+            )
+        data = response.json()
+        result = data["content"][0]["text"]
+        await update.message.reply_text(result)
+
+    except Exception as e:
+        logger.error(f"Claude API error: {e}")
+        await update.message.reply_text("Что-то пошло не так. Попробуй ещё раз.")
+
+# ──────────────────────────────────────────────
 # ОБРАБОТКА КНОПОК
 # ──────────────────────────────────────────────
 
@@ -57,7 +122,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # ── Главные разделы ──
     if data == "menu_economy":
         await show_economy(query)
     elif data == "menu_knowledge":
@@ -69,7 +133,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_help":
         await show_help(query)
 
-    # ── Экономика ──
     elif data == "econ_presale":
         await send_link(query, "economy", "presale")
     elif data == "econ_current":
@@ -79,7 +142,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "econ_debtor":
         await send_link(query, "economy", "debtor")
 
-    # ── База знаний ──
     elif data == "know_intro":
         await send_link(query, "knowledge", "intro")
     elif data == "know_services":
@@ -89,7 +151,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "know_kp":
         await send_link(query, "knowledge", "kp")
 
-    # ── Шаблоны ──
     elif data == "tmpl_sprint":
         await send_template(query, "sprint")
     elif data == "tmpl_recap":
@@ -103,11 +164,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "tmpl_annex":
         await send_template(query, "annex")
 
-    # ── Обучающие материалы ──
     elif data == "learn_glossary":
         await send_template(query, "glossary")
 
-    # ── Назад ──
     elif data == "back_main":
         keyboard = [
             [InlineKeyboardButton("💼 Экономика", callback_data="menu_economy")],
@@ -188,6 +247,7 @@ async def show_help(query):
         "/sprint — шаблон плана на спринт\n"
         "/recap — шаблон рекапа встречи\n"
         "/glossary — глоссарий студии\n"
+        "/tone [текст] — проверка тона сообщения\n"
         "/help — список команд\n\n"
         "По вопросам — обращайся к администратору бота.",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -243,6 +303,7 @@ def main():
     app.add_handler(CommandHandler("sprint", sprint_command))
     app.add_handler(CommandHandler("recap", recap_command))
     app.add_handler(CommandHandler("glossary", glossary_command))
+    app.add_handler(CommandHandler("tone", tone_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     logger.info("Бот запущен")
     app.run_polling()
