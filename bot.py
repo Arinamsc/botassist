@@ -89,8 +89,7 @@ async def tone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(response.raise_for_status()
-data = response.json()
+            response = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
                     "x-api-key": ANTHROPIC_API_KEY,
@@ -99,12 +98,6 @@ data = response.json()
                 },
                 json={
                     "model": "claude-sonnet-4-5",
-                    except Exception as e:
-    logger.error(f"Claude API error: {e}")
-    # добавь это:
-    if hasattr(e, 'response'):
-        logger.error(f"Response: {e.response.text}")
-    await update.message.reply_text("Что-то пошло не так. Попробуй ещё раз.")
                     "max_tokens": 1000,
                     "system": TOV_PROMPT,
                     "messages": [
@@ -112,6 +105,7 @@ data = response.json()
                     ],
                 }
             )
+        response.raise_for_status()
         data = response.json()
         result = data["content"][0]["text"]
         await update.message.reply_text(result)
